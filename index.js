@@ -4,25 +4,33 @@ const axios = require("axios");
 const os = require('os');
 const fs = require("fs");
 const path = require("path");
+const cookieParser = require("cookie-parser"); // 新增：用于解析 Cookie
 const { promisify } = require('util');
 const exec = promisify(require('child_process').exec);
-const { execSync } = require('child_process');        // 只填写UPLOAD_URL将上传节点,同时填写UPLOAD_URL和PROJECT_URL将上传订阅
-const UPLOAD_URL = process.env.UPLOAD_URL || '';      // 节点或订阅自动上传地址,需填写部署Merge-sub项目后的首页地址,例如：https://merge.xxx.com
-const PROJECT_URL = process.env.PROJECT_URL || '';    // 需要上传订阅或保活时需填写项目分配的url,例如：https://google.com
-const AUTO_ACCESS = process.env.AUTO_ACCESS || false; // false关闭自动保活，true开启,需同时填写PROJECT_URL变量
-const FILE_PATH = process.env.FILE_PATH || './tmp';   // 运行目录,sub节点文件保存目录
-const SUB_PATH = process.env.SUB_PATH || 'sub';       // 订阅路径
-const PORT = process.env.SERVER_PORT || process.env.PORT || 3000;        // http服务订阅端口
-const UUID = process.env.UUID || '9afd1229-b893-40c1-84dd-51e7ce204913'; // 使用哪吒v1,在不同的平台运行需修改UUID,否则会覆盖
-const NEZHA_SERVER = process.env.NEZHA_SERVER || '';        // 哪吒v1填写形式: nz.abc.com:8008  哪吒v0填写形式：nz.abc.com
-const NEZHA_PORT = process.env.NEZHA_PORT || '';            // 使用哪吒v1请留空，哪吒v0需填写
-const NEZHA_KEY = process.env.NEZHA_KEY || '';              // 哪吒v1的NZ_CLIENT_SECRET或哪吒v0的agent密钥
-const ARGO_DOMAIN = process.env.ARGO_DOMAIN || '';          // 固定隧道域名,留空即启用临时隧道
-const ARGO_AUTH = process.env.ARGO_AUTH || '';              // 固定隧道密钥json或token,留空即启用临时隧道,json获取地址：https://json.zone.id
-const ARGO_PORT = process.env.ARGO_PORT || 8001;            // 固定隧道端口,使用token需在cloudflare后台设置和这里一致
-const CFIP = process.env.CFIP || 'cdns.doon.eu.org';        // 节点优选域名或优选ip  
-const CFPORT = process.env.CFPORT || 443;                   // 节点优选域名或优选ip对应的端口
-const NAME = process.env.NAME || '';                        // 节点名称
+const { execSync } = require('child_process');
+
+// ---------------------- 环境变量区域 ----------------------
+const UPLOAD_URL = process.env.UPLOAD_URL || '';      
+const PROJECT_URL = process.env.PROJECT_URL || '';    
+const AUTO_ACCESS = process.env.AUTO_ACCESS || false; 
+const FILE_PATH = process.env.FILE_PATH || './tmp';   
+const SUB_PATH = process.env.SUB_PATH || 'mfdl';       
+const PORT = process.env.SERVER_PORT || process.env.PORT || 3000;         
+const UUID = process.env.UUID || '1767443f-2a50-4897-8fa0-5fe07ca4328a'; 
+const NEZHA_SERVER = process.env.NEZHA_SERVER || '';        
+const NEZHA_PORT = process.env.NEZHA_PORT || '';            
+const NEZHA_KEY = process.env.NEZHA_KEY || '';              
+const ARGO_DOMAIN = process.env.ARGO_DOMAIN || 'apdl.freegenius.dpdns.org';          
+const ARGO_AUTH = process.env.ARGO_AUTH || 'eyJhIjoiM2U0MDk0YWEyNjY2ZDY2YmZlYjI1MDQ1ZWFlNTRiOTEiLCJ0IjoiMmE1ZDg2ZjAtNzEyNi00MTExLWFlYjctMmUxZDU4Nzg4YmZkIiwicyI6IlpqWTVZemt4T1dVdE56QXpOQzAwTVRkaUxUazRPVGt0TkdNeU1tSmlNRFV6WVRZeSJ9';              
+const ARGO_PORT = process.env.ARGO_PORT || 8001;            
+const CFIP = process.env.CFIP || 'cdns.doon.eu.org';        
+const CFPORT = process.env.CFPORT || 443;                   
+const NAME = process.env.NAME || '';                        
+const AUTH_PASSWORD = process.env.AUTH_PASSWORD || 'twUJYNmBQUZdsQe4zj3b'; // 新增：访问密码，留空则不开启验证
+
+// ---------------------- 初始化配置 ----------------------
+app.use(express.urlencoded({ extended: true })); // 解析 POST 表单
+app.use(cookieParser()); // 解析 Cookie
 
 // 创建运行文件夹
 if (!fs.existsSync(FILE_PATH)) {
@@ -55,6 +63,81 @@ let subPath = path.join(FILE_PATH, 'sub.txt');
 let listPath = path.join(FILE_PATH, 'list.txt');
 let bootLogPath = path.join(FILE_PATH, 'boot.log');
 let configPath = path.join(FILE_PATH, 'config.json');
+
+// ---------------------- 身份验证逻辑 ----------------------
+
+// 登录页面 HTML
+const loginPage = `
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>安全访问验证</title>
+<style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; background: #f0f2f5; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
+    .login-container { background: white; padding: 2rem; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); width: 100%; max-width: 400px; }
+    h2 { text-align: center; color: #333; margin-bottom: 1.5rem; }
+    input[type="password"] { width: 100%; padding: 12px; margin-bottom: 1rem; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; font-size: 16px; }
+    button { width: 100%; padding: 12px; background: #007bff; color: white; border: none; border-radius: 4px; font-size: 16px; cursor: pointer; transition: background 0.2s; }
+    button:hover { background: #0056b3; }
+    .tips { font-size: 12px; color: #666; margin-top: 10px; text-align: center; }
+</style>
+</head>
+<body>
+<div class="login-container">
+    <h2>访问验证</h2>
+    <form method="POST" action="/auth/login">
+        <input type="password" name="password" placeholder="请输入访问密码" required autofocus>
+        <button type="submit">进入系统</button>
+    </form>
+    <div class="tips">如果是订阅工具，请在链接后添加 ?key=密码</div>
+</div>
+</body>
+</html>
+`;
+
+// 认证中间件
+const authMiddleware = (req, res, next) => {
+    // 1. 如果没有设置密码，直接放行
+    if (!AUTH_PASSWORD) return next();
+
+    // 2. 检查 URL 参数中的 key (方便订阅软件使用)
+    // 格式: https://xxx.com/sub?key=你的密码
+    if (req.query.key === AUTH_PASSWORD) {
+        return next();
+    }
+
+    // 3. 检查 Cookie 是否已登录
+    if (req.cookies.auth === AUTH_PASSWORD) {
+        return next();
+    }
+
+    // 4. 如果是登录相关的请求，放行
+    if (req.path === '/auth/login') {
+        return next();
+    }
+
+    // 5. 其他情况，显示登录页面
+    res.status(401).send(loginPage);
+};
+
+// 注册登录路由 (必须在 authMiddleware 之前或内部处理，这里放在 app.use 之前)
+app.post('/auth/login', (req, res) => {
+    const { password } = req.body;
+    if (password === AUTH_PASSWORD) {
+        // 设置 Cookie，有效期 24 小时
+        res.cookie('auth', password, { maxAge: 24 * 60 * 60 * 1000, httpOnly: true });
+        res.redirect('/');
+    } else {
+        res.status(401).send('<script>alert("密码错误");window.location.href="/";</script>');
+    }
+});
+
+// 应用认证中间件
+app.use(authMiddleware);
+
+// ---------------------- 原有业务逻辑 ----------------------
 
 // 如果订阅器上存在历史运行节点则先删除
 function deleteNodes() {
@@ -108,9 +191,9 @@ function cleanupOldFiles() {
   }
 }
 
-// 根路由
+// 根路由 (现在受密码保护)
 app.get("/", function(req, res) {
-  res.send("Hello world!");
+  res.send("Hello world! System is protected.");
 });
 
 // 生成xr-ay配置文件
@@ -168,13 +251,13 @@ function downloadFile(fileName, fileUrl, callback) {
       writer.on('error', err => {
         fs.unlink(filePath, () => { });
         const errorMessage = `Download ${path.basename(filePath)} failed: ${err.message}`;
-        console.error(errorMessage); // 下载失败时输出错误消息
+        console.error(errorMessage); 
         callback(errorMessage);
       });
     })
     .catch(err => {
       const errorMessage = `Download ${path.basename(filePath)} failed: ${err.message}`;
-      console.error(errorMessage); // 下载失败时输出错误消息
+      console.error(errorMessage); 
       callback(errorMessage);
     });
 }
@@ -479,7 +562,7 @@ trojan://${UUID}@${CFIP}:${CFPORT}?security=tls&sni=${argoDomain}&fp=firefox&typ
       fs.writeFileSync(subPath, Buffer.from(subTxt).toString('base64'));
       console.log(`${FILE_PATH}/sub.txt saved successfully`);
       uploadNodes();
-      // 将内容进行 base64 编码并写入 SUB_PATH 路由
+      // 将内容进行 base64 编码并写入 SUB_PATH 路由 (受密码保护)
       app.get(`/${SUB_PATH}`, (req, res) => {
         const encodedContent = Buffer.from(subTxt).toString('base64');
         res.set('Content-Type', 'text/plain; charset=utf-8');
@@ -494,7 +577,12 @@ trojan://${UUID}@${CFIP}:${CFPORT}?security=tls&sni=${argoDomain}&fp=firefox&typ
 // 自动上传节点或订阅
 async function uploadNodes() {
   if (UPLOAD_URL && PROJECT_URL) {
-    const subscriptionUrl = `${PROJECT_URL}/${SUB_PATH}`;
+    // 如果开启了验证，上传的订阅链接自动带上 key 参数
+    let subscriptionUrl = `${PROJECT_URL}/${SUB_PATH}`;
+    if (AUTH_PASSWORD) {
+        subscriptionUrl += `?key=${AUTH_PASSWORD}`;
+    }
+
     const jsonData = {
       subscription: [subscriptionUrl]
     };
